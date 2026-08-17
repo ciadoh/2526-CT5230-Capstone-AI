@@ -14,7 +14,7 @@ async def generate(body: dict):
     prompt = body.get("prompt", "")
     model = body.get("model", ollama_client.OLLAMA_MODEL)
     try:
-        response = await ollama_client.invoke(prompt, model)
-        return {"model": model, "response": response}
+        response, usage = await ollama_client.invoke(prompt, model)
+        return {"model": model, "response": response, "usage": usage}
     except Exception as e:
         return {"model": model, "response": f"ERROR: {e}", "error": True}

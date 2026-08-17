@@ -8,25 +8,19 @@ router = APIRouter(prefix="/api/scan", tags=["scan"])
 _status: dict = {"running": False, "last": None}
 
 
-SCANNER_IMAGE = "capstone_ai-scanner:latest"
-
-
 def _run_scanner(repo: str):
     try:
         import docker
         client = docker.from_env()
-        try:
-            client.images.get(SCANNER_IMAGE)
-        except docker.errors.ImageNotFound:
-            client.images.build(path="/scanner-build", tag=SCANNER_IMAGE, rm=True)
         client.containers.run(
-            SCANNER_IMAGE,
+            "capstone_ai-scanner",
             environment={
                 "TARGET_REPO": repo,
                 "SONAR_TOKEN": settings.sonarqube_token,
                 "SONAR_HOST_URL": "http://sonarqube:9000",
                 "GITHUB_TOKEN": settings.github_token,
             },
+            volumes={"/tmp/ca-bundle.pem": {"bind": "/tmp/ca-bundle.pem", "mode": "ro"}},
             network="capstone_ai_default",
             remove=True,
             detach=False,

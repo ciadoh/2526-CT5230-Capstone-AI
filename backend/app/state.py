@@ -5,10 +5,11 @@ AVAILABLE_REPOS = [
     "ciadoh/NodeGoat",
     "ciadoh/juice-shop",
     "ciadoh/WebGoat",
+    "ciadoh/2526-CT5230-Capstone-AI",
 ]
 
 # Repos where the authenticated GitHub token has write access (PRs allowed)
-PR_ENABLED_REPOS = {"ciadoh/NodeGoat", "ciadoh/juice-shop", "ciadoh/WebGoat"}
+PR_ENABLED_REPOS = {"ciadoh/NodeGoat", "ciadoh/juice-shop", "ciadoh/WebGoat", "ciadoh/2526-CT5230-Capstone-AI"}
 
 _active_repo: str | None = None
 

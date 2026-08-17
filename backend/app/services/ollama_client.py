@@ -18,7 +18,7 @@ async def _ensure_model(client: httpx.AsyncClient) -> None:
         )
 
 
-async def invoke(prompt: str, model: str = OLLAMA_MODEL) -> str:
+async def invoke(prompt: str, model: str = OLLAMA_MODEL) -> tuple[str, dict]:
     async with httpx.AsyncClient() as client:
         await _ensure_model(client)
         r = await client.post(
@@ -31,7 +31,18 @@ async def invoke(prompt: str, model: str = OLLAMA_MODEL) -> str:
             timeout=300,
         )
         r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"]
+        data = r.json()
+        text = data["choices"][0]["message"]["content"]
+        # Ollama's OpenAI-compatible endpoint reports usage the same shape as OpenAI;
+        # zero marginal cost, but token counts still matter for latency/throughput comparisons.
+        raw_usage = data.get("usage") or {}
+        usage = {
+            "input": raw_usage.get("prompt_tokens"),
+            "output": raw_usage.get("completion_tokens"),
+            "total": raw_usage.get("total_tokens"),
+            "unit": "TOKENS",
+        }
+        return text, usage
 
 
 async def status() -> dict:

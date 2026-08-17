@@ -25,7 +25,27 @@ def _client():
     )
 
 
-def invoke_model(model_id: str, prompt: str, max_tokens: int = 1024) -> str:
+def _extract_usage(response: dict) -> dict:
+    """Bedrock reports token counts as response headers for every provider
+    (x-amzn-bedrock-input/output-token-count), so this works uniformly across
+    Anthropic/Nova/Mistral without parsing provider-specific body shapes."""
+    headers = response.get("ResponseMetadata", {}).get("HTTPHeaders", {})
+
+    def _int(key):
+        try:
+            return int(headers.get(key))
+        except (TypeError, ValueError):
+            return None
+
+    input_tokens = _int("x-amzn-bedrock-input-token-count")
+    output_tokens = _int("x-amzn-bedrock-output-token-count")
+    total = None
+    if input_tokens is not None or output_tokens is not None:
+        total = (input_tokens or 0) + (output_tokens or 0)
+    return {"input": input_tokens, "output": output_tokens, "total": total, "unit": "TOKENS"}
+
+
+def invoke_model(model_id: str, prompt: str, max_tokens: int = 1024) -> tuple[str, dict]:
     client = _client()
 
     # Strip regional prefix (eu., us., ap.) for provider detection
@@ -58,14 +78,17 @@ def invoke_model(model_id: str, prompt: str, max_tokens: int = 1024) -> str:
         accept="application/json",
     )
     result = json.loads(response["body"].read())
+    usage = _extract_usage(response)
 
     if "anthropic" in base_id:
-        return result["content"][0]["text"]
+        text = result["content"][0]["text"]
     elif "amazon.nova" in base_id:
-        return result["output"]["message"]["content"][0]["text"]
+        text = result["output"]["message"]["content"][0]["text"]
     elif "mistral" in base_id:
-        return result["outputs"][0]["text"]
-    return str(result)
+        text = result["outputs"][0]["text"]
+    else:
+        text = str(result)
+    return text, usage
 
 
 def build_debt_prompt(issues: list[dict], metrics: dict) -> str:

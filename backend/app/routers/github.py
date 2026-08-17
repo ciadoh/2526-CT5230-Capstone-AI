@@ -114,9 +114,10 @@ async def create_fix_pr(req: FixPrRequest):
 
     try:
         if provider == OLLAMA_ALIAS:
-            fixed = _strip_fences(await ollama_client.invoke(prompt))
+            text, usage = await ollama_client.invoke(prompt)
         else:
-            fixed = _strip_fences(invoke_model(model_id, prompt, max_tokens=4096))
+            text, usage = invoke_model(model_id, prompt, max_tokens=4096)
+        fixed = _strip_fences(text)
     except Exception as e:
         if generation:
             generation.end(output=f"ERROR: {e}", level="ERROR")
@@ -127,7 +128,7 @@ async def create_fix_pr(req: FixPrRequest):
         raise HTTPException(status_code=502, detail=f"Model error: {e}")
 
     if generation:
-        generation.end(output=fixed)
+        generation.end(output=fixed, usage=usage)
     if trace:
         trace.update(output={"fixed_file": fixed[:500] + "..." if len(fixed) > 500 else fixed})
     if lf:
@@ -142,4 +143,9 @@ async def create_fix_pr(req: FixPrRequest):
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
-    return {"pr_url": pr.get("html_url"), "pr_number": pr.get("number"), "branch": pr.get("head", {}).get("ref")}
+    return {
+        "pr_url": pr.get("html_url"),
+        "pr_number": pr.get("number"),
+        "branch": pr.get("head", {}).get("ref"),
+        "usage": usage,
+    }

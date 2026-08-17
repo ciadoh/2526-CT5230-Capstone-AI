@@ -9,22 +9,22 @@ from langfuse import Langfuse
 OLLAMA_ALIAS = "ollama"
 
 
-async def _invoke_alias(model_alias: str, prompt: str) -> tuple[str, str]:
-    """Run a prompt through the selected provider. Returns (response_text, model_id)."""
+async def _invoke_alias(model_alias: str, prompt: str) -> tuple[str, str, dict]:
+    """Run a prompt through the selected provider. Returns (response_text, model_id, usage)."""
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
 
     if model_alias == OLLAMA_ALIAS:
-        text = await ollama_client.invoke(prompt)
-        return text, f"ollama/{ollama_client.OLLAMA_MODEL}"
+        text, usage = await ollama_client.invoke(prompt)
+        return text, f"ollama/{ollama_client.OLLAMA_MODEL}", usage
 
     model_id = MODELS.get(model_alias)
     if not model_id:
         raise HTTPException(status_code=400, detail=f"Unknown model alias: {model_alias}")
     loop = asyncio.get_event_loop()
     with ThreadPoolExecutor() as pool:
-        text = await loop.run_in_executor(pool, invoke_model, model_id, prompt)
-    return text, model_id
+        text, usage = await loop.run_in_executor(pool, invoke_model, model_id, prompt)
+    return text, model_id, usage
 
 router = APIRouter(prefix="/api/bedrock", tags=["bedrock"])
 
@@ -147,14 +147,14 @@ async def analyse(req: AnalyseRequest):
         generation = trace.generation(name=f"{provider}-invoke", model=model_id, input=prompt)
 
     try:
-        response_text, model_id = await _invoke_alias(req.model_alias, prompt)
+        response_text, model_id, usage = await _invoke_alias(req.model_alias, prompt)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"{provider.capitalize()} error: {e}")
 
     if generation:
-        generation.end(output=response_text)
+        generation.end(output=response_text, usage=usage)
     if trace:
         trace.update(output=response_text)
     if lf:
@@ -167,6 +167,7 @@ async def analyse(req: AnalyseRequest):
         "data_source": data_source,
         "prompt_preview": prompt[:300] + "...",
         "trace_id": trace.id if trace else None,
+        "usage": usage,
     }
 
 
@@ -186,14 +187,14 @@ async def analyse_issue(req: IssueAnalyseRequest):
         generation = trace.generation(name=f"{provider}-invoke", model=model_id, input=prompt)
 
     try:
-        response_text, model_id = await _invoke_alias(req.model_alias, prompt)
+        response_text, model_id, usage = await _invoke_alias(req.model_alias, prompt)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"{provider.capitalize()} error: {e}")
 
     if generation:
-        generation.end(output=response_text)
+        generation.end(output=response_text, usage=usage)
     if trace:
         trace.update(output=response_text)
     if lf:
@@ -203,6 +204,7 @@ async def analyse_issue(req: IssueAnalyseRequest):
         "model_alias": req.model_alias,
         "analysis": response_text,
         "trace_id": trace.id if trace else None,
+        "usage": usage,
     }
 
 
@@ -246,22 +248,32 @@ async def compare_models(req: CompareRequest):
 
     loop = asyncio.get_event_loop()
     with ThreadPoolExecutor() as pool:
-        bedrock_result, ollama_result = await asyncio.gather(
+        bedrock_raw, ollama_raw = await asyncio.gather(
             loop.run_in_executor(pool, invoke_model, model_id, prompt),
             ollama_client.invoke(prompt),
             return_exceptions=True,
         )
 
+    def _split(raw):
+        """gather(return_exceptions=True) leaves failures as bare Exceptions,
+        successes as (text, usage) tuples — unwrap both into a common shape."""
+        if isinstance(raw, Exception):
+            return raw, None
+        return raw
+
+    bedrock_result, bedrock_usage = _split(bedrock_raw)
+    ollama_result, ollama_usage = _split(ollama_raw)
+
     if bedrock_gen:
         if isinstance(bedrock_result, Exception):
             bedrock_gen.end(output=f"ERROR: {bedrock_result}", level="ERROR")
         else:
-            bedrock_gen.end(output=str(bedrock_result))
+            bedrock_gen.end(output=str(bedrock_result), usage=bedrock_usage)
     if ollama_gen:
         if isinstance(ollama_result, Exception):
             ollama_gen.end(output=f"ERROR: {ollama_result}", level="ERROR")
         else:
-            ollama_gen.end(output=str(ollama_result))
+            ollama_gen.end(output=str(ollama_result), usage=ollama_usage)
     if trace:
         trace.update(output={
             "bedrock": str(bedrock_result)[:300] if not isinstance(bedrock_result, Exception) else f"ERROR: {bedrock_result}",
@@ -278,12 +290,14 @@ async def compare_models(req: CompareRequest):
                 "provider": "bedrock",
                 "response": str(bedrock_result) if not isinstance(bedrock_result, Exception) else f"ERROR: {bedrock_result}",
                 "error": isinstance(bedrock_result, Exception),
+                "usage": bedrock_usage,
             },
             {
                 "model": ollama_model_id,
                 "provider": "ollama",
                 "response": str(ollama_result) if not isinstance(ollama_result, Exception) else f"ERROR: {ollama_result}",
                 "error": isinstance(ollama_result, Exception),
+                "usage": ollama_usage,
             },
         ],
     }
